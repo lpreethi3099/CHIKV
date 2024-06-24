@@ -1,0 +1,86 @@
+# Load necessary libraries
+library(deSolve)
+library(reshape2)
+library(ggplot2)
+library(readxl)
+
+# Load the data from Excel
+data_path <- "C:/Users/Preethi/Desktop/LSHTM 23-24/Summer Project/data.xlsx"
+df <- read_excel(data_path)
+
+# Correct column names if necessary (based on what colnames(df) shows)
+colnames(df) <- c("States", "Total_Population", "Initial_Susceptible", "Initial_Infected", 
+                  "Initial_Recovered", "lambda", "lambda_lb", "lambda_ub", 
+                  "Recovery_Rate", "Seroprevalence")
+
+# Define a function to run the SIR model with vaccination for a given state's data
+run_sir_model_vaccination <- function(state_data, vaccination_rate) {
+  # MODEL INPUTS:
+  initial_state_values <- c(
+    S = as.numeric(state_data$Initial_Susceptible),
+    I = as.numeric(state_data$Initial_Infected),
+    R = as.numeric(state_data$Initial_Recovered)
+  )
+  N <- as.numeric(state_data$Total_Population)
+  lambda <- as.numeric(state_data$lambda)
+  
+  # Calculate beta using the formula beta = lambda * (N / I)
+  beta <- lambda * (N / initial_state_values["I"])
+  
+  parameters <- c(
+    beta = beta,
+    gamma = 1/7 * 365,  # fixed recovery rate (per year)
+    mu = 13.8 / 1000,   # fixed background mortality rate
+    b = 6.1 / 1000,     # fixed birth rate
+    v = vaccination_rate # vaccination rate
+  )
+
+  # TIMESTEPS:
+  times <- seq(from = 0, to = 10, by = 2/400)  # from 0 to 10 YEARS in intervals of every 2/400 years
+
+  # SIR MODEL FUNCTION:
+  sir_model_vaccination <- function(time, state, parameters) {
+    with(as.list(c(state, parameters)), {
+      dS <- -lambda * S - mu * S + b * N - v * S
+      dI <- lambda * S - gamma * I - mu * I
+      dR <- gamma * I - mu * R + v * S
+      return(list(c(dS, dI, dR)))
+    })
+  }
+
+  # MODEL OUTPUT:
+  output <- as.data.frame(ode(y = initial_state_values, times = times, func = sir_model_vaccination, parms = parameters))
+
+  # PLOT
+  # Epidemic curve for the first year
+  plot_1_year <- ggplot(data = output, aes(x = time, y = I)) + geom_line() +
+    xlab("Time (years)") + ylab("Number of infected people") +
+    labs(title = paste("Epidemic curve in the first year after introduction of an infected case in", state_data$States, "with vaccination")) +
+    xlim(c(0, 1)) + theme_minimal()
+  
+  # Epidemic curve over 10 years
+  plot_10_years <- ggplot(data = output, aes(x = time, y = I)) + geom_line() +
+    xlab("Time (years)") + ylab("Number of infected people") +
+    labs(title = paste("Epidemic curve over 10 years in", state_data$States, "with vaccination")) +
+    theme_minimal()
+  
+  return(list(plot_1_year = plot_1_year, plot_10_years = plot_10_years))
+}
+
+# Define vaccination rate (e.g., 0.05 per year)
+vaccination_rate <- 0.05
+
+# Run the model and plot for each state
+state_plots <- lapply(1:nrow(df), function(i) run_sir_model_vaccination(df[i, ], vaccination_rate))
+
+# Display the plots for each state
+for (i in 1:length(state_plots)) {
+  print(state_plots[[i]]$plot_1_year)  # Plot for the first year
+  print(state_plots[[i]]$plot_10_years)  # Plot for 10 years
+}
+
+# Optionally, save plots to files
+for (i in 1:length(state_plots)) {
+  ggsave(filename = paste0("plot_1_year_vaccination_", df$States[i], ".png"), plot = state_plots[[i]]$plot_1_year)
+  ggsave(filename = paste0("plot_10_years_vaccination_", df$States[i], ".png"), plot = state_plots[[i]]$plot_10_years)
+}
