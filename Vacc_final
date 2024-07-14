@@ -1,0 +1,77 @@
+# Load required packages
+library(deSolve)
+library(reshape2)
+library(ggplot2)
+library(readxl)
+
+# Load the data from the specified Excel file
+data_path <- "C:/Users/Preethi/Desktop/LSHTM 23-24/Summer Project/data.xlsx"
+data <- read_excel(data_path)
+
+# Function to run the SIR model with birth and death rates for a given state with custom vaccination coverage
+run_sir_model <- function(state_data, p) {
+  # Extract state parameters
+  N <- state_data$`Total Population`
+  I <- state_data$`Initial Infected`
+  S <- (1 - p) * (N - I)  # Susceptible population after vaccination
+  R <- p * (N - I)        # Recovered population including vaccinated individuals
+  beta <- state_data$Beta
+  gamma <- 1 / 7  # Recovery rate
+  birth_rate <- state_data$`Birth rate` / 1000
+  death_rate <- state_data$`Death rate` / 1000
+
+  # Initial state values
+  initial_state_values <- c(S = S, I = I, R = R)
+  
+  # Parameters
+  parameters <- c(beta = beta, gamma = gamma, mu = birth_rate, nu = death_rate)
+  
+  # Time steps
+  times <- seq(from = 0, to = 730, by = 1)  # from 0 to 730 days in daily intervals
+
+  # SIR model function
+  sir_model <- function(time, state, parameters) {  
+    with(as.list(c(state, parameters)), {    
+      N <- S + I + R
+      lambda <- beta * I / N
+      dS <- mu * N - nu * S - lambda * S  # Include infection term
+      dI <- lambda * S - gamma * I - nu * I
+      dR <- gamma * I - nu * R + mu * N
+      return(list(c(dS, dI, dR)))
+    })
+  }
+
+  # Solve the model
+  output <- as.data.frame(ode(y = initial_state_values, 
+                              times = times, 
+                              func = sir_model,
+                              parms = parameters))
+  
+  output_long <- melt(as.data.frame(output), id = "time")
+  output_long$prevalence <- output_long$value / sum(initial_state_values)
+  output_long$State <- state_data$States
+  return(output_long)
+}
+
+# Define the vaccine coverage proportion
+p <- 1.0  # 100% vaccination coverage
+
+# Loop through each state and run the model
+results_list <- lapply(1:nrow(data), function(i) {
+  state_data <- data[i, , drop=FALSE]  # Ensure state_data is treated as a data frame
+  run_sir_model(state_data, p)
+})
+
+# Combine results into a single data frame
+combined_results <- do.call(rbind, results_list)
+
+# Plot the results for all states
+ggplot(data = combined_results, 
+       aes(x = time, y = prevalence, colour = variable, group = interaction(State, variable))) +  
+  geom_line() +                                                          
+  facet_wrap(~ State, scales = "free_y") +                               
+  xlab("Time (days)") +                                                   
+  ylab("Prevalence (proportion)") +                                      
+  labs(colour = "Compartment",                                           
+       title = "Prevalence of infection, susceptibility and recovery over time by State") +
+  theme_minimal()
